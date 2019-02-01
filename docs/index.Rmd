@@ -1,0 +1,180 @@
+---
+title: "Lecture 8: Point Level Models - Model Fitting"
+output:
+  revealjs::revealjs_presentation:
+    theme: night
+    center: true
+    transition: none
+    incremental: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+library(ggplot2)
+library(dplyr)
+library(mnormt)
+```
+
+# Class Intro
+
+## Intro Questions 
+- Why are we creating simulated spatial processes?
+- For Today:
+    - Model Fitting
+
+
+# Model Simulation
+
+## Simulating Spatial Process
+
+```{r}
+dim.grid <- 50
+grid.coords <- data.frame(x.grid = rep(seq(.05, .95, length.out=dim.grid), dim.grid),
+  y.grid = rep(seq(.05, .95, length.out = dim.grid), each = dim.grid))
+
+dist.grid <- dist(grid.coords, diag = T, upper = T) %>% as.matrix()
+
+sigma.sq <- 1
+phi <- 2
+Sigma <- sigma.sq * (matrix(1,dim.grid^2,dim.grid^2) - 1.5 * phi * dist.grid + .5 * (phi * dist.grid)^3) 
+Sigma[dist.grid > 1/phi] <- 0
+
+Y <- rmnorm(n=1, mean = 0, varcov = Sigma)
+
+grid.coords %>% mutate(Y = Y) %>% ggplot(aes(x=x.grid,y=y.grid)) + geom_point(aes(color=Y), size=3) + ggtitle('Simulated Spatial Process', subtitle = 'Spherical Covariance: sigma.sq = 1, phi = 2') + xlim(0,1) + ylim(0,1) +   scale_colour_gradient2() + theme_dark()
+```
+
+
+## Simulated Spatial Process: Exercise
+
+How does the spatial process change with:
+
+- another draw with same parameters?
+- a different value of $\phi$
+- a different value of $\sigma^2$
+- adding a nugget term, $\tau^2$
+
+# Model Fitting
+
+## Classical Model Fitting
+
+- The classical approach to spatial prediction is rooted in minimizing the mean-squared error.
+- This approach is often referred to as *Kriging* in honor of D.G. Krige a South African mining engineer.
+- As a result of Krige's work (along with others), point-level spatial analysis and geostatistical analysis are used interchangeably.
+
+
+
+## Mathematical Motivation
+- Let $\boldsymbol{Y} = \{Y(\boldsymbol{s_1}), \dots, Y(\boldsymbol{s_n}) \}$ be observations of a spatial process and $n$ sites.
+- Then $Y(\boldsymbol{s_0})$ is a site where the spatial process has not been observed.
+- __The Goal:__ What is the best predictor for $Y(\boldsymbol{s_0})$ given that $\boldsymbol{Y} = \{Y(\boldsymbol{s_1}), \dots, Y(\boldsymbol{s_n}) \}$ was observed?
+
+## Visual Motivation
+- __The Goal:__ What is the best predictor for $Y(\boldsymbol{s_0})$ given that $\boldsymbol{Y} = \{Y(\boldsymbol{s_1}), \dots, Y(\boldsymbol{s_n}) \}$ was observed?
+```{r, out.width = "80%", echo = F, fig.align = 'center', fig.cap='source: airnow.gov'}
+knitr::include_graphics("MT_Air.png") 
+```
+
+## Mathematical Notation
+- A linear predictor for $Y(\boldsymbol{s_0})$, given $\boldsymbol{Y}$ takes the form $\sum_i l_i Y(\boldsymbol{s_i}) + \delta_0$
+- Using squared error loss, we'd seek to minimize $$E \left[Y(\boldsymbol{s_0}) - \left(\sum_i l_i Y(\boldsymbol{s_i}) + \delta_0\right) \right]^2$$
+as a function of $l_i$ and $\delta_0$.
+- Describe and interpret $l_i$ and $\delta_0$
+
+## Connection to variogram
+
+- Recall the intrinsic stationarity assumption $$E[Y(\boldsymbol{s+h}) - Y(\boldsymbol{s})] = 0,$$
+thus $\sum_i l_i = 1$ such that
+$$E[Y(\boldsymbol{s_0}) - \sum_i l_i Y(\boldsymbol{s_i})] = 0$$
+- Following this logic, we would now minimize
+$$E [Y(\boldsymbol{s_0}) - \sum_i l_i Y(\boldsymbol{s_i}) ]^2 + \delta_0^2,$$
+thus $\delta_0 = 0$.
+
+## Connection to variogram: part 2
+- Define $a_0 = 1$ and $a_i = -l_i$, then we can rewrite
+$$E [Y(\boldsymbol{s_0}) - \sum_i l_i Y(\boldsymbol{s_i}) ]^2  \; \; \text{ as } \; \; E [\sum_{i=0}^n a_i Y(\boldsymbol{s_i}) ]^2$$
+- It turns out that 
+$$E [\sum_{i=0}^n a_i Y(\boldsymbol{s_i}) ]^2 = -\sum_i \sum_j a_i a_j \gamma(\boldsymbol{s_i} - \boldsymbol{s_j})$$
+- In other words, minimizing the squared error, under assumptions, justifies the variogram.
+- This is a contrained optimization of a quadratic form that is typically handled with a Lagrange multiplier. [Khan Academy Refresher Video](https://www.khanacademy.org/math/multivariable-calculus/applications-of-multivariable-derivatives/lagrange-multipliers-and-constrained-optimization/v/lagrange-multiplier-example-part-1)
+
+## Lagrange multipliers
+To rewrite the constrained optimization in terms of $l_i$ we get
+$$-\sum_{i=0}^n \sum_{j=0}^n a_i a_j \gamma(\boldsymbol{s_i} - \boldsymbol{s_j}) = -\sum_{i=1}^n \sum_{j=1}^n l_i l_j \gamma_{ij} + 2 \sum_{i=1}^n l_i \gamma_{0i},$$
+where $\gamma_{ij} = \gamma(\boldsymbol{s}_i - \boldsymbol{s}_j)$ and hence $\gamma_{0j} = \gamma(\boldsymbol{s}_0 - \boldsymbol{s}_j)$ 
+
+- Solving equations with this constraint requires partial derivatives and the use of Lagrange multipliers, typically denoted as $\lambda$. 
+
+## BLUP
+- It turns out that the solution for the vector $\boldsymbol{l}$ is
+$$\boldsymbol{l} = \Gamma^{-1} \left( \boldsymbol{\gamma_0} + \frac{(1 - \boldsymbol{1}^T \Gamma^{-1} \boldsymbol{\gamma_0})}{\boldsymbol{1}^T \Gamma^{-1} \boldsymbol{1}}\boldsymbol{1}\right),$$
+where $\Gamma$ is an $n \times n$ matrix with entries $\Gamma_{ij} - \gamma_{ij}$ and $\boldsymbol{\gamma_0}$ is the vector of $\gamma_{0i}$ values.
+- Then the Best Linear Unbiased Predictor is $\boldsymbol{l}^T\boldsymbol{Y}$
+- This BLUP also requires an estimate of $\gamma(\boldsymbol{h})$
+
+## So what does this all mean ...
+Consider a small example on 1-dimension.
+
+```{r}
+set.seed(01312019)
+krige.dat <- data.frame(x = c(1,3,5,7), y = c(log(1),log(3),log(5),log(7))+rnorm(4,0,.01)) 
+krige.dat %>% ggplot(aes(x=x, y=y)) + geom_point() + xlim(1,9) + ylim(0,3) + ylab('Response') + xlab('x coordinate') + ggtitle('1D kriging illustration') 
+```
+
+- Given the observed values, what should the predictions be at $\boldsymbol{s}^{*}_1 = 4$ and $\boldsymbol{s}^{*}_2 = 6$
+
+
+## So what does this all mean ...
+What should the predictions be at $\boldsymbol{s}^{*}_1 = 4$ and $\boldsymbol{s}^{*}_2 = 6$
+
+```{r}
+krige.dat %>% ggplot(aes(x=x, y=y)) + geom_point() + xlim(1,9) + ylim(0,3) + ylab('Response') + xlab('x coordinate') + ggtitle('1D kriging illustration') + annotate('text',x=4,y=1.3, label = "s1?") + annotate('text',x=6,y=2.2, label = "s2?")
+```
+
+## Kriging Exercise:
+- Recall
+$$\boldsymbol{l} = \Gamma^{-1} \left( \boldsymbol{\gamma_0} + \frac{(1 - \boldsymbol{1}^T \Gamma^{-1} \boldsymbol{\gamma_0})}{\boldsymbol{1}^T \Gamma^{-1} \boldsymbol{1}}\boldsymbol{1}\right),$$
+- Define $\gamma(h) = 1 - \exp(- \frac{h}{3})$ and compute the BLUPs for $\boldsymbol{s}_1^{*}$ and $\boldsymbol{s}_2^{*}$
+
+- Interpret and explain $\boldsymbol{l}$ for each sample point.
+
+- If you have time, fill in the line (rather than the surface) from (0.5, 7.5)
+
+## Kriging Solution
+
+```{r}
+# Create Gamma Matrix
+x <- krige.dat$x
+y <- krige.dat$y
+D <- dist(x, upper=T, diag=T) %>% as.matrix()
+Gamma = 1 - exp(-D/3)
+
+# Create gamma_0 for both s1* and s2*
+d1 <- sqrt((4 - x)^2) 
+d2 <- sqrt((6 - x)^2) 
+gamma.01 <- 1 - exp(-d1/3)
+gamma.02 <- 1 - exp(-d2/3)
+
+# Compute l
+
+l.1 <- solve(Gamma) %*% 
+  (gamma.01 + c(1 - rep(1,4) %*% solve(Gamma) %*% gamma.01) / c(rep(1,4) %*% solve(Gamma) %*% rep(1,4)))
+y1.pred <- t(l.1) %*% y
+
+l.2 <- solve(Gamma) %*% 
+  (gamma.02 + c(1 - rep(1,4) %*% solve(Gamma) %*% gamma.02) / c(rep(1,4) %*% solve(Gamma) %*% rep(1,4)))
+y2.pred <- t(l.2) %*% y
+
+krige.dat %>% ggplot(aes(x=x, y=y)) + geom_point() + xlim(1,9) + ylim(0,3) + ylab('Response') + xlab('x coordinate') + ggtitle('1D kriging illustration with BLUPs') + annotate('text',x=4,y=y1.pred, label = "s1") + annotate('text',x=6,y=y2.pred, label = "s2")
+
+```
+
+# Kriging with Gaussian Processes
+
+## A Gaussian Process
+
+
+## Additional Resources
+- [Meuse Data Tutorial](https://cran.r-project.org/web/packages/gstat/vignettes/gstat.pdf)
+- [Textbook Data Sets](https://www.counterpointstat.com/hierarchical-modeling-and-analysis-for-spatial-data.html/)
